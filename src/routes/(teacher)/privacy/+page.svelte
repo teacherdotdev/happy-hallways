@@ -1,10 +1,11 @@
 <script lang="ts">
+  import SettingsTabs from '#lib/SettingsTabs.svelte';
   import { siteUrl } from '#lib/guides.ts';
   import { supportEmail, supportMailto } from '#lib/support.ts';
 
   const title = 'Privacy · Happy Hallways digital hall pass';
   const description =
-    'Happy Hallways keeps your classes and passes in your own browser. No accounts, no cookies, no ads, and only a first name and a few letters of the last.';
+    "Happy Hallways keeps your classes and passes in your own browser. No accounts, no cookies, no ads, and no student data on our servers, ever.";
 </script>
 
 <svelte:head>
@@ -19,6 +20,7 @@
 </svelte:head>
 
 <div class="page site-prose">
+  <SettingsTabs />
   <header>
     <p class="eyebrow">Privacy</p>
     <h1>Privacy</h1>
@@ -32,12 +34,19 @@
       computer and are never uploaded to us or to anyone else. A backup is a file you download yourself.
     </p>
     <p>
-      For each student, Happy Hallways keeps only a first name and the first few letters of the last name, just enough to
-      tell students apart. The rest of the last name is thrown away when you paste your class list.
+      Your students' full names are kept on your computer, so you can tell them apart and see the same student across your
+      classes. Screens students can see, the kiosk and their own devices, only ever show a first name and the first few
+      letters of the last name. Your backup file holds full names, so keep it somewhere only you can open.
     </p>
     <p>
-      If you turn on PINs for a class, each student also has a short PIN to type at the kiosk. Happy Hallways makes these
-      up, or you can choose them. Please don't use real student ID numbers.
+      If you take attendance, Happy Hallways also keeps when each student arrived, and whether they were tardy or
+      absent, on your computer only. It's your own log for your class, not your school's official attendance, which stays
+      in your school's own system.
+    </p>
+    <p>
+      If you turn on PINs for a class, each student also has a short PIN to type at the kiosk, or to set up their own
+      device for passes. Happy Hallways makes these up, or you can choose them. Never use real student ID
+      numbers.
     </p>
   </section>
 
@@ -55,22 +64,42 @@
       Google's public connection service helps each device learn its own network address; it sees no class data.
     </p>
     <p>
-      The kiosk keeps a copy of your students' short names (and their PINs, if you use them) and holds passes only until
-      your computer receives them. It never shows anyone's PIN on screen.
+      Your computer decides who may leave; the kiosk asks it every time. The kiosk keeps a copy of your students' short
+      names (and their PINs, if you use them), and, if it loses touch with your computer, the times students signed back
+      in until it can hand them over. It never shows anyone's PIN on screen.
     </p>
   </section>
 
   <section class="card">
-    <h2>The student link</h2>
+    <h2>Students' own devices</h2>
     <p>
-      If you open the student link, students who have it can see, on their own device, what the kiosk shows the whole
-      room: who is out and where they went, who is waiting in line, and whether passes are open, using the same short
-      names. Their device connects straight to your computer, the same way the kiosk does, and keeps nothing.
+      If you turn on student devices, students who have the class code can see, on their own device, whether passes are open and how
+      many students are out or waiting at each place. Never who: students' names stay on the kiosk, in your room. Their
+      device connects straight to your computer, the same way the kiosk does.
     </p>
     <p>
-      Anyone with the link can see it while it's open, so share it only with your class. You can close it at any time,
-      or get a new link so the old one stops working. It never shows how long anyone has been out, any PIN, or anything
-      you've set for a student.
+      A student can set up their own device by typing their first name and PIN once. Their device then keeps
+      only a random code that means nothing anywhere else, shows them only their own status, and can sign them out and
+      back in, line up or ask you, during their class. Your computer checks everything it does. You can stop any device
+      acting as a student at any time.
+    </p>
+    <p>
+      Each class gets a new code, shown on your kiosk and your screen, and the old one stops working when the class changes.
+      You can turn student devices off at any time, or get a new code straight away.
+      It never shows another student's name, how long anyone else has been out, any PIN, or anything you've set for a
+      student.
+    </p>
+  </section>
+
+  <section class="card" aria-labelledby="where-title">
+    <h2 id="where-title">Where your students' information is</h2>
+    <p>
+      <strong>Only on your computer.</strong> Your classes, students, passes and history live in your browser on your own
+      computer. None of it is ever sent to a server we run, and we can't see it.
+    </p>
+    <p>
+      Students' devices talk only to your computer. A student's device keeps one random code that means nothing anywhere
+      else. Our matchmaking server sees only random device addresses, and the relay carries encrypted data it can't read.
     </p>
   </section>
 

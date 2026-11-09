@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { findClass } from '#lib/account.svelte.ts';
+  import { account, classStudents, findClass } from '#lib/account.svelte.ts';
   import Icon from '#lib/Icon.svelte';
   import { displayName } from '#lib/roster.ts';
 
@@ -10,7 +10,7 @@
    */
   const cls = $derived(findClass(page.params.id ?? '')!);
   const cards = $derived(
-    cls.students
+    classStudents(cls)
       .filter((student) => student.status === 'current' && student.pin)
       .map((student) => ({ id: student.id, name: displayName(student), pin: student.pin }))
       .sort((a, b) => a.name.localeCompare(b.name)),
@@ -26,8 +26,8 @@
     <p class="eyebrow">Kiosk PINs</p>
     <h2>Print PIN cards</h2>
   </div>
-  {#if !cls.studentPins}
-    <p class="muted">This class doesn't ask for PINs at the kiosk. Turn them on in Class settings first.</p>
+  {#if !account.studentPins}
+    <p class="muted">PINs are off. Turn them on on the <a href="/roster">Roster</a> first.</p>
   {:else}
     <p class="muted small">
       One card per student. Cut them apart and hand each student only their own. A student who forgets theirs can still
@@ -37,12 +37,11 @@
       <button class="btn btn-primary" onclick={() => window.print()} disabled={!cards.length}>
         <Icon name="printer" size={16} />Print
       </button>
-      <a class="btn btn-quiet" href="/classes/{cls.id}"><Icon name="arrow-left" size={16} />Back to students</a>
     </div>
   {/if}
 </section>
 
-{#if cls.studentPins}
+{#if account.studentPins}
   <div class="pin-cards" aria-label="PIN cards">
     {#each cards as card (card.id)}
       <div class="pin-card">
@@ -99,7 +98,7 @@
 
   /* On paper: just the cards, with the app around them left off. */
   @media print {
-    :global(.sidebar, .corner, .site-footer, .class-head, .no-print) {
+    :global(.sidebar, .corner, .checklist-spot, .site-footer, .class-head, .page-tabs, .no-print) {
       display: none !important;
     }
 

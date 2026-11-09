@@ -4,12 +4,13 @@
  * remembers which ones they have closed.
  * - News is "What's changed": a big window, shown once on whatever page the
  *   teacher opens, to teachers who were using Happy Hallways before the change.
- * - A Tip points at one thing on one page, the first time the teacher sees
- *   it. A page's tips show one after another, as a short tour.
  * Add new news at the end of `news`.
  */
 
 export type PopupArt = 'destination-limits' | 'check-destinations' | 'schedule' | 'no-pass-rules' | 'home' | 'requests';
+
+/** A small picture beside one item, from news-art/. */
+export type NewsThumb = 'own-device' | 'attendance' | 'visibility' | 'history-fix';
 
 export type News = {
   id: string;
@@ -19,20 +20,17 @@ export type News = {
    * Each change. One with a drawing gets a big row beside it; one without is a
    * short row in a compact list, with a link to where to find it.
    */
-  items: { title: string; text: string; art?: PopupArt; link?: { label: string; href: string } }[];
+  items: { title: string; text: string; art?: PopupArt; thumb?: NewsThumb; link?: { label: string; href: string } }[];
+  /** More of this change, listed only on the What's changed page, so the popup stays short. */
+  more?: { title: string; text: string }[];
+  /** A short thank-you, leading the news above its list. */
+  thanks?: string;
   /** Smaller changes, in one short line under the list. */
   also?: string;
+  /** A closing note at the bottom, by the buttons. An email address in it becomes a link to write to it. */
+  note?: string;
   /** Where the teacher should go to act on the news, when it all happens in one place. */
   action?: { label: string; href: string };
-};
-
-export type Tip = {
-  id: string;
-  /** The page it belongs on: an exact path, or a pattern for one like a class page. */
-  page: string | RegExp;
-  /** It points at the element marked `data-tip="{id}"`, and waits until there is one. */
-  title: string;
-  text: string;
 };
 
 export const news: News[] = [
@@ -102,7 +100,7 @@ export const news: News[] = [
       },
       {
         title: 'Student PINs',
-        text: 'Turn on “Students enter a PIN at the kiosk” in a class’s settings (the ⚙ button), so nobody signs out as someone else. Print PIN cards from the class’s Students list.',
+        text: 'Turn on Student PINs on the Roster, so nobody takes a pass as someone else. Print PIN cards from each class’s PINs button.',
       },
       {
         title: 'Student link',
@@ -112,32 +110,59 @@ export const news: News[] = [
     ],
     also: 'Drag your classes in the sidebar to put them in order. Long destination lists now scroll on the kiosk, and the icon picker always fits and finds everyday words like “restroom” and “nurse”.',
   },
-];
-
-export const tips: Tip[] = [
   {
-    id: 'tip-status',
-    page: '/',
-    title: 'Always one click away',
-    text: 'This box shows your class, schedule, kiosk and requests at a glance. Click it from any page to come back to Home.',
-  },
-  {
-    id: 'tip-requests',
-    page: '/',
-    title: 'Students’ requests land here',
-    text: 'When something stops a student at the kiosk, they can ask you, and the request shows up here as it happens. Approve, and their pass starts right away; deny, and the kiosk tells them “not right now”.',
-  },
-  {
-    id: 'tip-switch',
-    page: '/',
-    title: 'Early release? Switch here',
-    text: 'Click the class to put a different one on the kiosk by hand, or the schedule on the right to switch to another one for today.',
-  },
-  {
-    id: 'tip-roster',
-    page: /^\/classes\/(?!new)[^/]+$/,
-    title: 'Classes are your rosters',
-    text: 'Add and edit students here. Their passes moved to History: click a student to see theirs.',
+    id: '2026-11-whats-new',
+    title: "What's new in Happy Hallways",
+    thanks: 'Thank you for every email, comment and idea. Almost everything here came straight from your requests.',
+    items: [
+      {
+        title: 'Students can take a pass from their own device',
+        text: 'Each class gets a code on the kiosk and on Home. Students join on a Chromebook or phone with their first name and PIN.',
+        thumb: 'own-device',
+      },
+      {
+        title: 'Attendance, if you want it',
+        text: 'Turn it on in Pass Options. Students tap in when they arrive; late is tardy, never arriving is absent.',
+        thumb: 'attendance',
+      },
+      {
+        title: 'Choose what students can see',
+        text: 'Make a destination like the Nurse private, or hide names, places or the line in a class’s Settings tab.',
+        thumb: 'visibility',
+      },
+      {
+        title: 'Fix mistakes in History',
+        text: 'Cancel an accidental pass and give it back, or add a note to any pass.',
+        thumb: 'history-fix',
+      },
+    ],
+    more: [
+      {
+        title: 'Keep this computer open during class',
+        text: "Your computer now decides who can go, for the kiosk and for students' own devices. Keep Happy Hallways open and awake while you teach. If it closes, passes pause until it's back, though students coming back are still recorded.",
+      },
+      {
+        title: 'Class codes replace the old Student link',
+        text: 'The code changes every class period. If you posted the old link in Google Classroom, students who open it are asked for the code.',
+      },
+      {
+        title: 'One roster for all your classes',
+        text: "A student in two of your classes is now one student, so their passes, PIN and pass allowance follow them. Check the Roster to merge anyone we couldn't match, and paste your class lists again to add full names; only you ever see them.",
+      },
+      {
+        title: 'Everything that needs you, in one place',
+        text: 'Requests and overdue students sit in the Needs you panel in the corner of every page. From Home you can add a student to a line, take one out, or clear it.',
+      },
+      {
+        title: 'Your data is safer',
+        text: "Happy Hallways now keeps a copy of your data from before this update, and if it ever can't read what's saved, it stops and helps you send it to us instead of starting over. Merging two students asks first and can be undone. Students without a PIN are never asked for one, and new PINs are made only for new students or when you turn PINs on.",
+      },
+      {
+        title: 'Smaller changes',
+        text: "Kiosk names are in A to Z order and the kiosk stays awake. A sound plays when it's a student's turn, and you can turn on a chime for overdue passes in Pass Options. Drag destinations to reorder them. Each class has Students, PINs and Settings tabs, and History and Settings are under More in the sidebar. We now say “take a pass” and “come back”.",
+      },
+    ],
+    note: 'Something not working since this update? Email us at support@teacher.dev. We read every message.',
   },
 ];
 
@@ -158,14 +183,7 @@ export function unseenNews(seen: Record<string, string>) {
   return news.filter((each) => !seen[each.id]);
 }
 
-/** This page's tips not seen yet, in tour order. */
-export function unseenTips(path: string, seen: Record<string, string>) {
-  return tips.filter(
-    (tip) => !seen[tip.id] && (typeof tip.page === 'string' ? tip.page === path : tip.page.test(path)),
-  );
-}
-
 /** Any popup by id, for `?popup=` and the Help menu. */
 export function popupNamed(id: string) {
-  return news.find((each) => each.id === id) ?? tips.find((each) => each.id === id);
+  return news.find((each) => each.id === id);
 }

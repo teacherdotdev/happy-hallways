@@ -18,10 +18,10 @@ export const steps = [
   },
   {
     key: 'kiosk',
-    icon: 'tablet',
+    icon: 'kiosk',
     title: 'Start the kiosk',
     short: 'A tablet by the door, or this computer. Students tap their name.',
-    text: 'Pair a spare tablet or Chromebook by the door, or use this computer. Students tap their name to sign out and back in, and you see who’s out from your desk.',
+    text: 'Pair a spare tablet or Chromebook by the door, or use this computer. Students tap their name to take a pass, and again when they’re back, and you see who’s out from your desk.',
   },
 ] as const satisfies readonly { key: string; icon: IconName; title: string; short: string; text: string }[];
 
@@ -29,6 +29,6 @@ export type StepKey = (typeof steps)[number]['key'];
 
 /** The one thing every teacher must know before the first day. */
 export const keepOpen = {
-  title: 'Keep both screens open',
-  text: 'Your teacher page and the kiosk talk to each other directly, with no server in between. Leave Happy Hallways open on your laptop and on the kiosk all day. While your laptop’s page is closed, passes wait on the kiosk; while the kiosk is closed, students can’t sign out.',
+  title: 'Keep your laptop open and awake',
+  text: 'Your laptop decides who may leave. The kiosk and students’ own devices ask it every time, directly, with no server in between. Leave Happy Hallways open on your laptop, with the lid open, all day. While it’s closed or asleep, nobody can sign out; students can still sign back in at the kiosk.',
 };

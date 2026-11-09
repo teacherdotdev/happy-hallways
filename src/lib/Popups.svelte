@@ -3,14 +3,16 @@
   import { page } from '$app/state';
   import { account, markPopupsSeen } from './account.svelte';
   import Modal from './Modal.svelte';
-  import { news, popupNamed, tips, unseenNews, unseenTips, type News, type Tip } from './popups';
+  import { news, popupNamed, unseenNews, type News } from './popups';
+  import NewsThumb from './NewsThumb.svelte';
   import UpdateArt from './UpdateArt.svelte';
+  import { supportEmail, supportMailto } from './support';
 
   /**
-   * Shows Popups, one at a time: news first, then this page's tips, in order.
-   * Closing one in any way counts as having seen it. `?popup=<id>` shows one
-   * again, `?popup=news` every piece of news, and `?popup=tour` this page's
-   * tips, whether seen or not, as the Help menu offers.
+   * Shows news Popups. Closing one in any way counts as having seen it.
+   * `?popup=<id>` shows one again, and `?popup=news` every piece of news, as
+   * the Help menu offers. `?whats-new` previews the newest news without
+   * counting it as seen, to look at it before it goes out.
    */
   let asked = $state(page.url.searchParams.get('popup'));
   // Arriving with ?popup= shows it once; drop it from the address so a reload doesn't.
@@ -23,22 +25,26 @@
     replaceState(url, {});
   });
 
-  const path = $derived(page.url.pathname);
+
+  let preview = $state(page.url.searchParams.has('whats-new'));
+  $effect(() => {
+    if (!page.url.searchParams.has('whats-new')) return;
+    preview = true;
+    const url = new URL(page.url.href);
+    url.searchParams.delete('whats-new');
+    replaceState(url, {});
+  });
+
+  /** A closed preview stays closed until the page reloads, though it was never counted as seen. */
+  let previewClosed = $state(false);
 
   const shownNews = $derived.by((): News[] => {
+    if (preview) return news.slice(-1);
+    if (previewClosed) return [];
     if (asked === 'news') return [...news].reverse();
     const one = asked ? popupNamed(asked) : null;
     if (one && 'items' in one) return [one];
     return [...unseenNews(account.seenPopups)].reverse();
-  });
-
-  /** The tour for this page: every tip when asked for, otherwise only those not seen yet. */
-  let tourDone = $state<string[]>([]);
-  const tour = $derived.by((): Tip[] => {
-    const one = asked ? popupNamed(asked) : null;
-    if (one && !('items' in one)) return [one];
-    const onPage = asked === 'tour' ? unseenTips(path, {}) : unseenTips(path, account.seenPopups);
-    return onPage.filter((tip) => !tourDone.includes(tip.id));
   });
 
   // News waits while another dialog is open, so it never stacks on top of one,
@@ -55,81 +61,27 @@
   });
 
   function closeNews() {
-    markPopupsSeen(shownNews.map((each) => each.id));
+    // A preview leaves it unseen, so it still shows when it goes out.
+    if (!preview) markPopupsSeen(shownNews.map((each) => each.id));
+    else previewClosed = true;
+    preview = false;
     asked = null;
   }
+
+  /** The note, with the support email as a link to write to it. */
+  function noteParts(note: string) {
+    const [before, ...rest] = note.split(supportEmail);
+    return { before, after: rest.join(supportEmail), hasEmail: rest.length > 0 };
+  }
+
+  /** News that thanks teachers leads with its own title and thank-you. */
+  const lead = $derived(shownNews.length === 1 && shownNews[0].thanks ? shownNews[0] : null);
 
   function act(href: string) {
     closeNews();
     goto(href);
   }
 
-  // A tip waits until what it points at has settled on the page, so it never
-  // flashes up while the teacher is on their way somewhere else, then follows
-  // it as the page scrolls. It steps aside while a dialog is open, and comes
-  // back when the dialog closes.
-  let target = $state<DOMRect | null>(null);
-  const tip = $derived(shownNews.length ? null : (tour[0] ?? null));
-  $effect(() => {
-    if (!tip) return;
-    const id = tip.id;
-    const since = Date.now();
-    const find = () => {
-      const element = document.querySelector(`[data-tip="${id}"]`);
-      const dialogOpen = document.querySelector('[aria-modal="true"]');
-      target = element && !dialogOpen && Date.now() - since >= 700 ? element.getBoundingClientRect() : null;
-    };
-    find();
-    const timer = setInterval(find, 400);
-    window.addEventListener('scroll', find, true);
-    window.addEventListener('resize', find);
-    return () => {
-      clearInterval(timer);
-      window.removeEventListener('scroll', find, true);
-      window.removeEventListener('resize', find);
-      target = null;
-    };
-  });
-
-  // Read the ids first: marking one seen moves `tip` on to the next straight away.
-  function nextTip() {
-    if (!tip) return;
-    const id = tip.id;
-    const last = tour.length <= 1;
-    tourDone = [...tourDone, id];
-    markPopupsSeen([id]);
-    if (last) asked = null;
-  }
-
-  function endTour() {
-    const ids = tour.map((each) => each.id);
-    tourDone = [...tourDone, ...ids];
-    markPopupsSeen(ids);
-    asked = null;
-  }
-
-  // Leaving the page ends where the tour was; the rest waits for the next visit.
-  $effect(() => {
-    void path;
-    tourDone = [];
-  });
-
-  /** Beside its target when there's room, otherwise below it, always on screen. */
-  const placement = $derived.by(() => {
-    if (!target) return null;
-    const width = 300;
-    const right = target.right + 16;
-    if (right + width < window.innerWidth - 12 && target.width < 400) {
-      return { left: right, top: Math.max(12, Math.min(target.top, window.innerHeight - 220)), side: 'left' };
-    }
-    return {
-      left: Math.max(12, Math.min(target.left, window.innerWidth - width - 12)),
-      top: Math.min(target.bottom + 12, window.innerHeight - 220),
-      side: 'top',
-    };
-  });
-  const tipNumber = $derived(tip ? tips.filter((each) => each.page === tip.page).findIndex((each) => each.id === tip.id) + 1 : 0);
-  const tipCount = $derived(tip ? tips.filter((each) => each.page === tip.page).length : 0);
 </script>
 
 {#if shownNews.length && !otherDialogOpen}
@@ -137,16 +89,22 @@
     <div class="dialog whats-changed">
       <div>
         <p class="eyebrow">What's changed</p>
-        <h2 id="whats-changed-title">Thank you for all your feedback</h2>
-        <p class="muted">Here's what's new in Happy Hallways.</p>
+        {#if lead}
+          <h2 id="whats-changed-title">{lead.title}</h2>
+          <p class="thanks">{lead.thanks}</p>
+        {:else}
+          <h2 id="whats-changed-title">Thank you for all your feedback</h2>
+          <p class="muted">Here's what's new in Happy Hallways.</p>
+        {/if}
       </div>
 
       {#each shownNews as update (update.id)}
         <section class="update">
           {#if shownNews.length > 1}<p class="eyebrow">{update.title}</p>{/if}
+          {#if update.thanks && !lead}<p class="thanks">{update.thanks}</p>{/if}
           <ol class="changes">
             {#each update.items as item (item.title)}
-              <li class:compact={!item.art}>
+              <li class:compact={!item.art && !item.thumb} class:with-thumb={!!item.thumb}>
                 <div>
                   <h3>{item.title}</h3>
                   <p class="muted">
@@ -154,7 +112,7 @@
                     {#if item.link}<a class="go" href={item.link.href} onclick={closeNews}>{item.link.label} →</a>{/if}
                   </p>
                 </div>
-                {#if item.art}<UpdateArt art={item.art} />{/if}
+                {#if item.art}<UpdateArt art={item.art} />{:else if item.thumb}<NewsThumb thumb={item.thumb} label={item.title} />{/if}
               </li>
             {/each}
           </ol>
@@ -166,34 +124,24 @@
         </section>
       {/each}
 
+      {#each shownNews.filter((each) => each.note) as update (update.id)}
+        {@const parts = noteParts(update.note!)}
+        <p class="note">
+          {parts.before}{#if parts.hasEmail}<a href={supportMailto('Happy Hallways')}>{supportEmail}</a>{parts.after}{/if}
+        </p>
+      {/each}
+
       <div class="dialog-actions">
         {#if shownNews.length === 1 && shownNews[0].action}
           {@const action = shownNews[0].action}
           <button class="btn" onclick={() => act(action.href)}>{action.label}</button>
         {/if}
+        <a class="see-all" href="/settings/changes" onclick={closeNews}>See everything that changed</a>
         <button class="btn btn-primary" onclick={closeNews}>Got it</button>
       </div>
     </div>
   </Modal>
-{:else if tip && placement && target}
-  <div class="spotlight" aria-hidden="true" style:left="{target.left - 6}px" style:top="{target.top - 6}px" style:width="{target.width + 12}px" style:height="{target.height + 12}px"></div>
-  <div class="tip {placement.side}" role="dialog" aria-labelledby="tip-title" style:left="{placement.left}px" style:top="{placement.top}px">
-    <p class="eyebrow">Tip{tipCount > 1 ? ` · ${tipNumber} of ${tipCount}` : ''}</p>
-    <h3 id="tip-title">{tip.title}</h3>
-    <p class="muted small">{tip.text}</p>
-    <div class="row">
-      {#if tour.length > 1}
-        <button class="btn btn-small btn-quiet" onclick={endTour}>Skip</button>
-        <button class="btn btn-small btn-primary" onclick={nextTip}>Next</button>
-      {:else}
-        <button class="btn btn-small btn-primary" onclick={nextTip}>Got it</button>
-      {/if}
-    </div>
-  </div>
 {/if}
-
-<!-- Escape ends the tour only while a tip is showing; otherwise it belongs to the open dialog. -->
-<svelte:window onkeydown={(event) => event.key === 'Escape' && tip && target && !shownNews.length && endTour()} />
 
 <style>
   .whats-changed {
@@ -259,43 +207,39 @@
     font-size: 18px;
   }
 
-  /* Below the corner messages (Overdue, the checklist), so a tip never hides them, and below dialogs. */
-  .spotlight {
-    position: fixed;
-    z-index: 40;
-    border: 3px solid var(--sun-ray);
-    border-radius: 14px;
-    box-shadow: 0 0 0 4px rgb(251 191 36 / 25%);
-    pointer-events: none;
-  }
-
-  .tip {
-    position: fixed;
-    z-index: 41;
-    display: grid;
-    gap: 6px;
-    width: 300px;
-    padding: 14px 16px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    background: var(--surface);
-    box-shadow: 0 12px 32px rgb(42 38 31 / 18%);
-  }
-
-  .tip h3 {
-    margin: 0;
-    font-size: 16px;
-  }
-
-  .tip .row {
-    justify-content: flex-end;
-    margin-top: 4px;
-  }
-
   @media (max-width: 640px) {
     .changes li {
       grid-template-columns: 1fr;
       gap: 12px;
     }
+  }
+
+  .thanks {
+    max-width: 68ch;
+    margin-top: 6px;
+    font-size: 16px;
+    line-height: 1.55;
+  }
+
+  .note {
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: var(--surface-sunk);
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  /* A small picture to the right of a short item. */
+  .changes li.with-thumb {
+    grid-template-columns: 1fr 120px;
+    gap: 20px;
+    padding-top: 12px;
+  }
+
+  .see-all {
+    align-self: center;
+    margin-right: auto;
+    color: var(--muted);
+    font-size: 13px;
   }
 </style>

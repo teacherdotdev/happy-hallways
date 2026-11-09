@@ -2,10 +2,12 @@
   import { goto, replaceState } from '$app/navigation';
   import { page, updated } from '$app/state';
   import { onMount } from 'svelte';
-  import { setDoorLocked } from '#lib/account.svelte.ts';
+  import { keepAttendance, setDoorLocked } from '#lib/account.svelte.ts';
   import {
+    absentCount,
     activeDoorClass,
     allowanceFor,
+    arriveLateAs,
     askTeacher,
     canAsk,
     cancelRequest,
@@ -25,8 +27,13 @@
     joinLine,
     leaveLine,
     line,
+    lateArrivalNeedsPin,
     lineSpotFor,
+    needsArrival,
     needsPin,
+    shownTo,
+    showsLineNames,
+    showsWhere,
     noPassNow,
     onSchedule,
     openPassFor,
@@ -38,6 +45,7 @@
     settleRequests,
     setup,
     signBackIn,
+    tapToArrive,
     undoPass,
     upNext,
     waitingCount,
@@ -48,9 +56,12 @@
   import Icon from '#lib/Icon.svelte';
   import { askBeforeLeaving, leaveTo } from '#lib/leaving.ts';
   import Modal from '#lib/Modal.svelte';
+  import RoomCode from '#lib/RoomCode.svelte';
   import StudentPinPad from '#lib/StudentPinPad.svelte';
   import SupportDetails from '#lib/SupportDetails.svelte';
   import { serveStudentLink } from '#lib/studentLink.svelte.ts';
+  import { keepAwake } from '#lib/wakeLock.ts';
+  import { yourTurnSound } from '#lib/sound.ts';
   import { formatClock, nextClassPeriod } from '#lib/schedule.ts';
 
   const local = $derived(isLocal());
@@ -63,14 +74,18 @@
     const timer = setInterval(() => (clock = Date.now()), 15_000);
     return () => clearInterval(timer);
   });
-  // On Schedule, the kiosk changes class by itself as each period starts.
+  // On Schedule, the teacher's computer changes class as each period starts; on a paired kiosk, it does that itself.
   $effect(() => {
-    if (local || paired) followSchedule(clock);
+    void clock;
+    if (local) followSchedule();
   });
   // A Request ends by itself once nothing stops the student any more.
   $effect(() => {
     void clock;
-    if (paired) settleRequests();
+    if (local) {
+      settleRequests();
+      keepAttendance();
+    }
   });
   /** For a minute after the teacher says no, the student's name says so. */
   const deniedRecently = (studentId: string) => clock - (door.denied[studentId] ?? 0) < 60_000;
@@ -90,7 +105,8 @@
    * under a Class Limit, the one Class Line (with no destination of its own).
    */
   const lines = $derived(
-    hasClassLimit()
+    // When the class hides where students went, every line shows as one, so a name never sits beside a place (docs/adr/0022).
+    hasClassLimit() || !showsWhere()
       ? [{ destination: null, spots: waiting }].filter((each) => each.spots.length)
       : destinations
           .map((destination) => ({ destination: destination.label as string | null, spots: line(destination.label) }))
@@ -98,6 +114,13 @@
   );
   const ready = $derived(upNext(clock));
   const isUpNext = (studentId: string) => ready.some((spot) => spot.studentId === studentId);
+  // A short "your turn" sound when someone in line becomes Up Next. Never anything about time (docs/adr/0003).
+  let upNextBefore = new Set<string>();
+  $effect(() => {
+    const now = new Set(ready.map((spot) => spot.studentId));
+    if ([...now].some((id) => !upNextBefore.has(id))) yourTurnSound();
+    upNextBefore = now;
+  });
   const blocked = $derived(noPassNow(clock));
 
   let code = $state(page.url.searchParams.get('code') ?? '');
@@ -115,8 +138,8 @@
   let confirmForget = $state(false);
   /**
    * "Reconnect" on a kiosk that's offline: the same code screen a new device
-   * sees. The teacher shows a code on their laptop; this device keeps what
-   * it saved while offline. If it finds the laptop by itself meanwhile, the
+   * sees. The teacher shows a code on their laptop; this device keeps
+   * the returns it saved while offline. If it finds the laptop by itself meanwhile, the
    * screen steps aside.
    */
   let reconnecting = $state(false);
@@ -129,6 +152,12 @@
   }
   $effect(() => {
     if (reconnecting && (door.status === 'live' || door.device?.kioskId !== reconnectingFrom)) reconnecting = false;
+  });
+
+  // The door screen is up all day: keep this device's screen from sleeping while it's open.
+  onMount(() => {
+    keepAwake(true);
+    return () => keepAwake(false);
   });
 
   onMount(() => {
@@ -169,6 +198,19 @@
   /** A student who tapped their name in a class that asks for PINs, typing theirs. */
   let pinFor = $state(null as { id: string; name: string } | null);
 
+  /**
+   * "Just arrived?": a student already marked Absent isn't on the door, so they
+   * type their first name (and PIN) instead. The kiosk never lists who is
+   * Absent. See docs/adr/0020.
+   */
+  let lateArrival = $state<{ firstName: string; pin: string } | null>(null);
+  function sendLateArrival(event: SubmitEvent) {
+    event.preventDefault();
+    if (!lateArrival?.firstName.trim()) return;
+    arriveLateAs(lateArrival.firstName.trim(), lateArrivalNeedsPin() ? lateArrival.pin : undefined);
+    lateArrival = null;
+  }
+
   function tap(student: { id: string; name: string }) {
     if (needsPin(student.id)) pinFor = student;
     else actFor(student);
@@ -180,8 +222,12 @@
     if (student) actFor(student);
   }
 
-  /** Whatever tapping their name means right now: coming back, going, or checking on their line or Request. */
+  /** Whatever tapping their name means right now: arriving, coming back, going, or checking on their line or Request. */
   function actFor(student: { id: string; name: string }) {
+    if (needsArrival(student.id)) {
+      tapToArrive(student.id);
+      return;
+    }
     if (openPassFor(student.id)) {
       signBackIn(student.id);
       return;
@@ -230,7 +276,7 @@
     }
   }
 
-  /** "Teacher PIN", wherever a rule has stopped a student: the teacher lets them go right here. */
+  /** "Teacher: let them go", wherever a rule has stopped a student: the teacher types their PIN and lets them go right here. */
   function askToLetGo(offer: { studentId: string; destination: string }) {
     dismissNotice();
     openTeacher();
@@ -264,13 +310,41 @@
   }
 </script>
 
+<!--
+  Wherever a rule stops a student: asking the teacher, and the teacher letting
+  them go with their PIN. Asking needs a separate kiosk that can reach the
+  teacher's computer; otherwise the screen says why instead of hiding it.
+-->
+{#snippet askOptions(offer: { studentId: string; destination: string }, close?: () => void)}
+  {#if paired}
+    <button
+      class="door-btn"
+      disabled={!canAsk()}
+      onclick={() => {
+        close?.();
+        ask(offer);
+      }}><Icon name="hand" size={16} />Ask my teacher</button
+    >
+    {#if !canAsk()}<p class="ask-note">Your teacher's computer isn't connected</p>{/if}
+  {:else}
+    <p class="ask-note">Need to go now? Ask your teacher to let you go.</p>
+  {/if}
+  <button
+    class="door-btn"
+    onclick={() => {
+      close?.();
+      askToLetGo(offer);
+    }}><Icon name="lock" size={16} />Teacher: let them go</button
+  >
+{/snippet}
+
 <svelte:head>
   <title>Happy Hallways kiosk</title>
   <!-- The kiosk screen is for a classroom door, not for search results. -->
   <meta name="robots" content="noindex" />
 </svelte:head>
 
-<!-- Closing the kiosk stops students signing out, and may strand passes not yet sent. -->
+<!-- Closing the kiosk stops students taking passes, and may strand passes not yet sent. -->
 <svelte:window onbeforeunload={(event) => askBeforeLeaving(event, local || paired)} />
 <svelte:document onpointerdown={() => (lastTouch = Date.now())} onkeydown={() => (lastTouch = Date.now())} />
 
@@ -283,10 +357,16 @@
         <h1>Reconnect this kiosk</h1>
         <p class="lede">
           On the teacher's laptop, open Happy Hallways and choose <strong>Reconnect</strong> on Home. Then type the 6-digit
-          code here, or scan the QR code with this device's camera. Passes saved on this device are kept.
+          code here, or scan the QR code with this device's camera. Students who came back in here are kept.
         </p>
       {:else}
         <h1>Make this device the kiosk</h1>
+        {#if door.unreadableSaved}
+          <p class="lede" role="alert">
+            This kiosk couldn't read what it had saved. A copy is kept for support. Pair it again to keep going; returns
+            already sent to the teacher's laptop are safe there.
+          </p>
+        {/if}
         {#if door.status === 'replaced'}
           <p class="lede">This device is no longer the kiosk. A different one was paired on the teacher's laptop.</p>
         {/if}
@@ -328,13 +408,20 @@
         <p class="door-eyebrow">{cls?.name ?? 'Happy Hallways'}</p>
         <h1>{cls || !following ? 'Tap your name' : 'No class right now'}</h1>
       </div>
-      {#if paired && door.status === 'live'}
+      {#if setup()?.room}
+        <!-- Students can join this class on their own device with this code (docs/adr/0019). -->
+        <div class="door-room"><RoomCode code={setup()!.room!.code} size="small" /></div>
+      {/if}
+      {#if paired && door.status === 'live' && door.laptopOutdated}
+        <!-- An older version on the teacher's computer can't answer this kiosk; returns are still kept here. -->
+        <p class="connection"><span class="dot"></span>Your teacher's computer needs to reload Happy Hallways</p>
+      {:else if paired && door.status === 'live'}
         <p class="connection live"><span class="dot"></span>Connected</p>
       {:else if paired}
         <div class="connection">
           <span class="dot"></span>
           <span>
-            Offline{waitingCount() ? ` · ${waitingCount()} ${waitingCount() === 1 ? 'pass' : 'passes'} saved here` : ''}
+            Waiting for your teacher's computer{waitingCount() ? ` · ${waitingCount()} ${waitingCount() === 1 ? 'tap' : 'taps'} saved here` : ''}
           </span>
           <button class="reconnect" onclick={reconnect}>Reconnect</button>
         </div>
@@ -358,15 +445,21 @@
               <Icon name="users" size={22} />Line
             {/if}
           </strong>
-          {#each each.spots as spot, index (spot.studentId)}
-            <span class="line-spot" class:next={isUpNext(spot.studentId)}>
-              <span class="line-number">{index + 1}</span>
-              <!-- In the Class Line, each student shows where they're going. -->
-              {#if !each.destination}<DestinationIcon label={spot.destination} list={destinations} size={20} />{/if}
-              {spot.studentName}
-              {#if isUpNext(spot.studentId)}· your turn!{/if}
-            </span>
-          {/each}
+          {#if !showsLineNames()}
+            <!-- Who's in line is hidden in this class: only how many (docs/adr/0022). -->
+            <span class="line-spot">{each.spots.length} waiting</span>
+          {:else}
+            {#each each.spots as spot, index (spot.studentId)}
+              <span class="line-spot" class:next={isUpNext(spot.studentId)}>
+                <!-- Merged lines (where is hidden) have no single order to number. -->
+                {#if hasClassLimit() || showsWhere()}<span class="line-number">{index + 1}</span>{/if}
+                <!-- In the Class Line, each student shows where they're going. -->
+                {#if !each.destination && showsWhere()}<DestinationIcon label={spot.destination} list={destinations} size={20} />{/if}
+                {spot.studentName}
+                {#if isUpNext(spot.studentId)}· your turn!{/if}
+              </span>
+            {/each}
+          {/if}
         </div>
       {/each}
     {/if}
@@ -378,28 +471,37 @@
       <main class="names" class:closed={blocked} aria-label="Students in {cls.name}">
         {#each cls.students as student (student.id)}
           {@const pass = openPassFor(student.id)}
-          {@const spot = pass ? null : lineSpotFor(student.id)}
           {@const isNext = isUpNext(student.id)}
+          <!-- With who's in line hidden, a tile shows a place in line only when it's that student's turn (docs/adr/0022). -->
+          {@const spot = pass ? null : showsLineNames() || isNext ? lineSpotFor(student.id) : null}
           {@const asked = pass ? null : requestFor(student.id)}
           <!-- Where they went, never how long: the door carries no clock. See docs/adr/0003. -->
           <button class="name" class:out={pass} class:waiting={spot && !isNext} class:up-next={isNext} class:asked onclick={() => tap(student)}>
             <span class="name-text">{student.name}</span>
             {#if pass}
               <span class="name-status out-status">
-                <DestinationIcon label={pass.destination} list={destinations} size={22} />Out · {pass.destination}
+                {#if shownTo(pass.destination)}
+                  <DestinationIcon label={pass.destination} list={destinations} size={22} />Out · {pass.destination}
+                {:else}
+                  <!-- A Private destination: only "Out" (docs/adr/0021). -->
+                  Out
+                {/if}
               </span>
             {:else if asked}
               <span class="name-status asked-status">
-                <DestinationIcon label={asked.destination} list={destinations} size={22} />Asked your teacher
+                {#if shownTo(asked.destination)}<DestinationIcon label={asked.destination} list={destinations} size={22} />{/if}Asked your teacher
               </span>
             {:else if isNext && spot}
               <span class="name-status next-status">
-                <DestinationIcon label={spot.destination} list={destinations} size={22} />Your turn: tap!
+                {#if showsWhere()}<DestinationIcon label={spot.destination} list={destinations} size={22} />{/if}Your turn: tap!
               </span>
             {:else if spot}
               <span class="name-status waiting-status">
-                <DestinationIcon label={spot.destination} list={destinations} size={22} />{ordinal(spot.position)} in line
+                {#if showsWhere()}<DestinationIcon label={spot.destination} list={destinations} size={22} />{/if}{ordinal(spot.position)} in line
               </span>
+            {:else if needsArrival(student.id)}
+              <!-- Never "tardy" on the door's shared screen (docs/adr/0020). -->
+              <span class="name-status arrive-status">Tap when you arrive</span>
             {:else if deniedRecently(student.id)}
               <span class="name-status denied-status">Not right now</span>
             {:else}
@@ -412,6 +514,9 @@
       </main>
       <p class="count">
         {outCount(cls.id)} out{waiting.length ? ` · ${waiting.length} in line` : ''}
+        {#if absentCount()}
+          <button class="door-btn just-arrived" onclick={() => (lateArrival = { firstName: '', pin: '' })}>Just arrived?</button>
+        {/if}
       </p>
     {:else if following}
       <main class="pairing">
@@ -497,22 +602,7 @@
         {#if spot}
           {@const offer = { studentId: spot.studentId, destination: spot.destination }}
           <div class="choices">
-            {#if canAsk()}
-              <button
-                class="door-btn"
-                onclick={() => {
-                  waitingFor = null;
-                  ask(offer);
-                }}><Icon name="hand" size={16} />Ask my teacher</button
-              >
-            {/if}
-            <button
-              class="door-btn"
-              onclick={() => {
-                waitingFor = null;
-                askToLetGo(offer);
-              }}><Icon name="lock" size={16} />Teacher PIN</button
-            >
+            {@render askOptions(offer, () => (waitingFor = null))}
           </div>
         {/if}
       </div>
@@ -527,7 +617,7 @@
         <h2 id="asked-title">{askedFor.name}</h2>
         {#if asked}
           <p class="lede">
-            You asked to go to {asked.destination}. If your teacher says yes, your name will say you’re out. Then go.
+            You asked {shownTo(asked.destination) ? `to go to ${asked.destination}` : 'your teacher'}. If your teacher says yes, your name will say you’re out. Then go.
           </p>
         {/if}
         <div class="choices">
@@ -566,13 +656,30 @@
         {/if}
         {#if door.notice.offerTeacher}
           {@const offer = door.notice.offerTeacher}
-          {#if canAsk()}
-            <button class="door-btn" onclick={() => ask(offer)}><Icon name="hand" size={16} />Ask my teacher</button>
-          {/if}
-          <button class="door-btn" onclick={() => askToLetGo(offer)}><Icon name="lock" size={16} />Teacher PIN</button>
+          {@render askOptions(offer)}
         {/if}
       </div>
     </div>
+  {/if}
+
+  {#if lateArrival}
+    <Modal overlay="overlay" label="Just arrived" onClose={() => (lateArrival = null)}>
+      <div class="sheet">
+        <h2>Just arrived?</h2>
+        <p class="lede small">Type your first name{lateArrivalNeedsPin() ? ' and your PIN' : ''}.</p>
+        <form class="late-form" onsubmit={sendLateArrival}>
+          <input aria-label="Your first name" autocomplete="off" bind:value={lateArrival.firstName} {@attach focusOnShow} />
+          {#if lateArrivalNeedsPin()}
+            <input class="code-input" type="password" inputmode="numeric" autocomplete="off" aria-label="Your PIN" maxlength="6" bind:value={lateArrival.pin} />
+          {/if}
+          <button
+            class="door-btn primary"
+            disabled={!lateArrival.firstName.trim() || (lateArrivalNeedsPin() && !/^\d{3,6}$/.test(lateArrival.pin))}>I'm here</button
+          >
+        </form>
+        <button class="quiet-link" onclick={() => (lateArrival = null)}>Cancel</button>
+      </div>
+    </Modal>
   {/if}
 
   {#if teacher !== 'closed'}
@@ -590,7 +697,7 @@
           <h2>Stop being the kiosk?</h2>
           {#if waitingCount()}
             <p class="door-error">
-              {waitingCount()} {waitingCount() === 1 ? 'pass hasn’t' : 'passes haven’t'} reached the laptop yet and will be lost.
+              {waitingCount()} {waitingCount() === 1 ? 'tap (a return or arrival) hasn’t' : 'taps (returns or arrivals) haven’t'} reached the teacher's computer yet, and will be lost.
             </p>
           {/if}
           <div class="choices">
@@ -634,6 +741,17 @@
 </div>
 
 <style>
+  .ask-note {
+    margin: 0;
+    color: var(--muted);
+    font-size: 15px;
+    text-align: center;
+  }
+
+  .door-room {
+    margin-left: auto;
+  }
+
   /* The door screen is read from across the room: large type, plain light surfaces, strong contrast. */
   .door {
     --door-bg: var(--bg);
@@ -687,6 +805,7 @@
   }
 
   .door-head {
+    flex-wrap: wrap;
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
@@ -807,6 +926,25 @@
 
   .denied-status {
     color: var(--door-out);
+  }
+
+  .just-arrived {
+    margin-left: 12px;
+  }
+
+  .late-form {
+    display: grid;
+    gap: 10px;
+  }
+
+  .late-form input:not(.code-input) {
+    padding: 12px;
+    font-size: 22px;
+  }
+
+  .arrive-status {
+    color: #2361a6;
+    font-weight: 800;
   }
 
   /* Readable from across the room, so students can see it isn't time without asking. */

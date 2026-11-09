@@ -20,7 +20,7 @@
 
   const title = 'Happy Hallways · A free digital hall pass for classrooms';
   const description =
-    'A free digital hall pass for teachers. Students sign out at a kiosk by the door, and you see who’s out and how much class each student misses.';
+    'A free digital hall pass for teachers. Students take a pass at a kiosk by the door, and you see who’s out and how much class each student misses.';
   const url = `${siteUrl}/welcome`;
   const image = `${siteUrl}/og-image.png`;
 
@@ -96,7 +96,7 @@
           {/each}
         </ol>
         <div class="keep-open">
-          <span class="tile"><Icon name="monitor" size={22} /><Icon name="tablet" size={22} /></span>
+          <span class="tile"><Icon name="laptop" size={22} /><Icon name="kiosk" size={22} /></span>
           <div>
             <h3>{keepOpen.title}</h3>
             <p>{keepOpen.text}</p>

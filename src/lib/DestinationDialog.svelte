@@ -27,6 +27,8 @@
   let studentLimit = $state<number | null>(destination ? destination.limit : 1);
   // svelte-ignore state_referenced_locally
   let countsTowardClass = $state(destination?.countsTowardClassLimit !== false);
+  // svelte-ignore state_referenced_locally
+  let isPrivate = $state(!!destination?.private);
   /** Only the way limits work now is shown; the other way's setting is kept for if the teacher switches back. */
   const hasClassLimit = $derived(account.limitMode === 'class');
   const limitChoices = $derived([...new Set([1, 2, 3, 4, 5, 6, ...(studentLimit ? [studentLimit] : [])])].sort((a, b) => a - b));
@@ -57,9 +59,11 @@
       error = 'Minutes should be between 1 and 120, or left empty for no time limit.';
       return;
     }
-    const saved: Destination = { id: destination?.id ?? newId(), label: name, minutes: limit, color, icon, limit: studentLimit };
+    // A Private destination never has a limit or a line (docs/adr/0021).
+    const saved: Destination = { id: destination?.id ?? newId(), label: name, minutes: limit, color, icon, limit: isPrivate ? null : studentLimit };
     if (!counts) saved.countsTowardAllowance = false;
-    if (!countsTowardClass) saved.countsTowardClassLimit = false;
+    if (!countsTowardClass || isPrivate) saved.countsTowardClassLimit = false;
+    if (isPrivate) saved.private = true;
     saveDestination(saved);
     onClose();
   }
@@ -71,7 +75,7 @@
 </script>
 
 <Modal onClose={onClose} labelledby="destination-title">
-  <form class="dialog destination-dialog" style="width:min(560px,100%)" onsubmit={save}>
+  <form class="dialog destination-dialog" style="width:min(880px,100%)" onsubmit={save}>
     <div class="dialog-head">
       <h2 id="destination-title">{destination ? `Edit ${destination.label}` : 'New destination'}</h2>
       <span
@@ -86,90 +90,102 @@
       </span>
     </div>
 
-    <label class="field">Name <input bind:value={label} placeholder="Library" /></label>
-
-    <label class="field">
-      Minutes the trip should take (optional)
-      <input type="number" min="1" max="120" bind:value={minutes} placeholder="No time limit" style="max-width:160px" />
-      <span class="muted small" style="font-weight:500">Leave it empty if this trip has no time limit. It'll never show as overdue.</span>
-    </label>
-
-    {#if hasClassLimit}
-      <label class="check">
-        <input type="checkbox" bind:checked={countsTowardClass} />
-        <span>
-          Counts toward the class limit
-          <span class="muted small">
-            Untick for places like the Nurse or the Counselor, so students going there never wait, however many are out.
-          </span>
-        </span>
-      </label>
-    {:else}
-      <label class="field">
-        Students here at once
-        <select
-          value={studentLimit === null ? '' : String(studentLimit)}
-          onchange={(event) => (studentLimit = event.currentTarget.value ? Number(event.currentTarget.value) : null)}
-          style="max-width:160px"
-        >
-          <option value="">No limit</option>
-          {#each limitChoices as option (option)}<option value={String(option)}>{option} at a time</option>{/each}
-        </select>
-        <span class="muted small" style="font-weight:500">
-          Once it's full, the next student waits, or joins this destination's line if lines are on in Pass Options.
-          Choose “No limit” for places like the Nurse, so nobody has to wait.
-        </span>
-      </label>
-    {/if}
-
-    <label class="check">
-      <input type="checkbox" bind:checked={counts} />
-      <span>
-        Counts toward the Pass Allowance
-        <span class="muted small">Untick for trips that shouldn't use up a student's passes, like the Nurse.</span>
-      </span>
-    </label>
-
-    <div class="field">
-      <span>Color</span>
-      <div class="swatches" role="group" aria-label="Color">
-        {#each colorNames as name (name)}
-          <button
-            type="button"
-            class="swatch"
-            style:background={destinationColors[name].strong}
-            aria-label={name}
-            aria-pressed={color === name}
-            onclick={() => (color = name)}
-          ></button>
-        {/each}
-      </div>
-    </div>
-
-    <div class="field icon-field">
-      <span>Icon</span>
-      <input type="search" placeholder="Search icons, e.g. water, book, bus" bind:value={iconSearch} aria-label="Search icons" />
-      <div class="icon-groups">
-        {#each iconGroups as entry (entry.group)}
-          <p class="eyebrow">{entry.group}</p>
-          <div class="icon-choices" role="group" aria-label={entry.group}>
-            {#each entry.names as name (name)}
+    <div class="dest-cols">
+      <div class="dest-look">
+        <label class="field">Name <input bind:value={label} placeholder="Library" /></label>
+        <div class="field">
+          <span>Color</span>
+          <div class="swatches" role="group" aria-label="Color">
+            {#each colorNames as name (name)}
               <button
                 type="button"
-                class="icon-choice"
-                style:color={icon === name ? destinationColors[color].strong : ''}
-                title={name.replaceAll('-', ' ')}
-                aria-label={name.replaceAll('-', ' ')}
-                aria-pressed={icon === name}
-                onclick={() => (icon = name)}
-              >
-                <Icon {name} size={20} />
-              </button>
+                class="swatch"
+                style:background={destinationColors[name].strong}
+                aria-label={name}
+                aria-pressed={color === name}
+                onclick={() => (color = name)}
+              ></button>
             {/each}
           </div>
+        </div>
+        <div class="field icon-field">
+          <span>Icon</span>
+          <input type="search" placeholder="Search icons, e.g. water, book, bus" bind:value={iconSearch} aria-label="Search icons" />
+          <div class="icon-groups">
+            {#each iconGroups as entry (entry.group)}
+              <p class="eyebrow">{entry.group}</p>
+              <div class="icon-choices" role="group" aria-label={entry.group}>
+                {#each entry.names as name (name)}
+                  <button
+                    type="button"
+                    class="icon-choice"
+                    style:color={icon === name ? destinationColors[color].strong : ''}
+                    title={name.replaceAll('-', ' ')}
+                    aria-label={name.replaceAll('-', ' ')}
+                    aria-pressed={icon === name}
+                    onclick={() => (icon = name)}
+                  >
+                    <Icon {name} size={20} />
+                  </button>
+                {/each}
+              </div>
+            {:else}
+              <p class="muted small">No icons match "{iconSearch}".</p>
+            {/each}
+          </div>
+        </div>
+      </div>
+      <div class="dest-rules">
+        <label class="field">
+          Minutes the trip should take (optional)
+          <input type="number" min="1" max="120" bind:value={minutes} placeholder="No time limit" style="max-width:160px" />
+          <span class="muted small" style="font-weight:500">Leave it empty if this trip has no time limit. It'll never show as overdue.</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" bind:checked={counts} />
+          <span>
+            Counts toward the Pass Allowance
+            <span class="muted small">Untick for trips that shouldn't use up a student's passes, like the Nurse.</span>
+          </span>
+        </label>
+        <label class="check">
+          <input type="checkbox" bind:checked={isPrivate} />
+          <span>
+            Private
+            <span class="muted small">
+              Students see someone is out, not where. No limit or line.
+            </span>
+          </span>
+        </label>
+        {#if isPrivate}
+          <!-- No limit or line to set: a line would show the room who's going here. -->
+        {:else if hasClassLimit}
+          <label class="check">
+            <input type="checkbox" bind:checked={countsTowardClass} />
+            <span>
+              Counts toward the class limit
+              <span class="muted small">
+                Untick for places like the Nurse or the Counselor, so students going there never wait, however many are out.
+              </span>
+            </span>
+          </label>
         {:else}
-          <p class="muted small">No icons match "{iconSearch}".</p>
-        {/each}
+          <label class="field">
+            Students here at once
+            <select
+              value={studentLimit === null ? '' : String(studentLimit)}
+              onchange={(event) => (studentLimit = event.currentTarget.value ? Number(event.currentTarget.value) : null)}
+              style="max-width:160px"
+            >
+              <option value="">No limit</option>
+              {#each limitChoices as option (option)}<option value={String(option)}>{option} at a time</option>{/each}
+            </select>
+            <span class="muted small" style="font-weight:500">
+              Once it's full, the next student waits, or joins this destination's line if lines are on in Pass Options.
+              Choose “No limit” for places like the Nurse, so nobody has to wait.
+            </span>
+          </label>
+        {/if}
       </div>
     </div>
 
@@ -188,3 +204,54 @@
     </div>
   </form>
 </Modal>
+
+<style>
+  /* What it looks like on the left; how passes there work on the right. */
+  .dest-cols {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 28px;
+    min-height: 0;
+  }
+
+  /* Lets the icon list, not the whole dialog, scroll on a short screen. */
+  :global(.destination-dialog) > .dest-cols {
+    flex: 0 1 auto;
+  }
+
+  .dest-look,
+  .dest-rules {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-height: 0;
+  }
+
+  .dest-look > :global(*),
+  .dest-rules > :global(*) {
+    flex: none;
+  }
+
+  .dest-look > :global(.icon-field) {
+    flex: 0 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 220px;
+  }
+
+  .dest-rules {
+    padding-left: 28px;
+    border-left: 1px solid var(--border);
+  }
+
+  @media (max-width: 720px) {
+    .dest-cols {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .dest-rules {
+      padding-left: 0;
+      border-left: 0;
+    }
+  }
+</style>

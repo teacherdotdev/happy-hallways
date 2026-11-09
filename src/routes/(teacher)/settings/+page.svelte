@@ -1,6 +1,7 @@
 <script lang="ts">
+  import SettingsTabs from '#lib/SettingsTabs.svelte';
   import { account, exportAccount, importAccount } from '#lib/account.svelte.ts';
-  import ConfirmDialog from '#lib/ConfirmDialog.svelte';
+  import Modal from '#lib/Modal.svelte';
   import { dayKey, shortDate } from '#lib/passes.ts';
   import { download } from '#lib/csv.ts';
   import Icon from '#lib/Icon.svelte';
@@ -24,12 +25,17 @@
     input.value = '';
     if (!file) return;
     error = '';
+    own = null;
     pending = await file.text();
   }
 
+  /** Whether the backup is the teacher's own, from another computer, or a colleague's. The teacher must say. */
+  let own = $state<boolean | null>(null);
+
   function replaceEverything() {
     try {
-      importAccount(pending);
+      if (own === null) return;
+      importAccount(pending, own);
       // Start fresh so the kiosk connection picks up the imported pairing.
       leaveTo('/');
     } catch (problem) {
@@ -40,6 +46,7 @@
 </script>
 
 <div class="page">
+  <SettingsTabs />
   <header class="page-head">
     <div>
       <p class="eyebrow">Settings</p>
@@ -57,7 +64,8 @@
         <p class="eyebrow">Backup</p>
         <h2>Download a backup</h2>
         <p class="muted small">
-          One file with every class, student, pass, destination, your pass options and your kiosk pairing.
+          One file with every class, student, pass, destination, your pass options and your kiosk pairing. It holds your
+          students' full names, so keep it somewhere only you can open.
           {#if account.lastExportedAt}
             Last backed up {daysSinceExport === 0 ? 'today' : `${shortDate(account.lastExportedAt)}, ${daysSinceExport} ${daysSinceExport === 1 ? 'day' : 'days'} ago`}.
           {:else}
@@ -90,6 +98,7 @@
     {#if error}<p class="form-error" role="alert">{error}</p>{/if}
   </section>
 
+
   <section class="card">
     <div>
       <p class="eyebrow">Getting started</p>
@@ -108,14 +117,24 @@
 </div>
 
 {#if pending}
-  <ConfirmDialog
-    title="Replace everything?"
-    message="All the classes, students and passes in this browser will be replaced by the ones in the file. Anything not in the file will be lost."
-    confirmLabel="Replace everything"
-    danger
-    onConfirm={replaceEverything}
-    onCancel={() => (pending = '')}
-  />
+  <Modal onClose={() => (pending = '')} labelledby="replace-title">
+    <div class="dialog">
+      <h2 id="replace-title">Replace everything?</h2>
+      <p class="muted">
+        All the classes, students and passes in this browser will be replaced by the ones in the file. Anything not in
+        the file will be lost.
+      </p>
+      <fieldset class="whose">
+        <legend>Whose backup is this?</legend>
+        <label class="check"><input type="radio" bind:group={own} value={true} />My own, from another computer (keeps my kiosk paired)</label>
+        <label class="check"><input type="radio" bind:group={own} value={false} />Someone else's (set up my own kiosk and student devices again)</label>
+      </fieldset>
+      <div class="dialog-actions">
+        <button class="btn" onclick={() => (pending = '')}>Cancel</button>
+        <button class="btn btn-danger solid" onclick={replaceEverything} disabled={own === null}>Replace everything</button>
+      </div>
+    </div>
+  </Modal>
 {/if}
 
 <style>
@@ -132,5 +151,18 @@
     height: 18px;
     margin: 0;
     accent-color: var(--accent);
+  }
+
+  .whose {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .whose legend {
+    margin-bottom: 6px;
+    font-weight: 700;
   }
 </style>

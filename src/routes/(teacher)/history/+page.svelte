@@ -1,8 +1,9 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { account, findClass } from '#lib/account.svelte.ts';
+  import { account, classStudents, findClass } from '#lib/account.svelte.ts';
   import CorrectionDialog from '#lib/CorrectionDialog.svelte';
   import { download, historyToCsv } from '#lib/csv.ts';
+  import { attendanceToCsv, markText } from '#lib/attendance.ts';
   import DestinationIcon from '#lib/DestinationIcon.svelte';
   import FilterChips from '#lib/FilterChips.svelte';
   import {
@@ -59,7 +60,7 @@
         key: 'student',
         label: 'Student',
         options: classes.flatMap((cls) =>
-          cls.students
+          classStudents(cls)
             .map((student) => ({
               value: student.id,
               label: `${displayName(student)}${several ? ` · ${cls.name}` : ''}${student.status === 'former' ? ' (former)' : ''}`,
@@ -102,11 +103,31 @@
   }
 
   function ending(pass: Pass) {
+    if (pass.cancelledBy === 'teacher') return { text: 'Cancelled, given back', tone: '' };
     if (!pass.inAt) return { text: 'Still out', tone: 'warn' };
     if (pass.endedBy === 'switch') return { text: 'Class changed', tone: '' };
     if (pass.endedBy === 'removed') return { text: 'Left the roster', tone: '' };
     if (pass.endedBy === 'teacher') return { text: 'Marked back by you', tone: '' };
-    return { text: 'Signed back in', tone: 'ok' };
+    return { text: 'Came back', tone: 'ok' };
+  }
+
+  /** Attendance for the same dates, class and student filters, newest first. See docs/adr/0020. */
+  const attendance = $derived.by(() => {
+    const classFilter = filters.find((filter) => filter.field === 'class')?.values ?? [];
+    const studentFilter = filters.find((filter) => filter.field === 'student')?.values ?? [];
+    return account.attendance
+      .filter(
+        (mark) =>
+          inRange(new Date(`${mark.day}T12:00:00`).toISOString(), range, from, to) &&
+          (!classFilter.length || classFilter.includes(mark.classId)) &&
+          (!studentFilter.length || studentFilter.includes(mark.studentId)),
+      )
+      .sort((a, b) => b.day.localeCompare(a.day) || a.studentName.localeCompare(b.studentName));
+  });
+  const anyAttendance = $derived(!!account.attendanceRules || account.attendance.length > 0);
+
+  function exportAttendance() {
+    download(`Happy Hallways attendance ${dayKey(new Date())}.csv`, attendanceToCsv(attendance, className), 'text/csv');
   }
 
   function exportCsv() {
@@ -214,7 +235,10 @@
               {#if row.kind === 'pass'}
                 {@const pass = row.pass}
                 {@const end = ending(pass)}
-                <td><strong>{pass.studentName}</strong></td>
+                <td>
+                  <strong>{pass.studentName}</strong>
+                  {#if pass.note}<span class="pass-note muted small">{pass.note}</span>{/if}
+                </td>
                 <td>{className(pass.classId)}</td>
                 <td><span class="destination-chip"><DestinationIcon label={pass.destination} size={22} />{pass.destination}</span></td>
                 <td class="num">
@@ -265,20 +289,63 @@
   {:else}
     <div class="empty card">
       <span class="icon-tile"><Icon name="history" /></span>
-      {everything.length ? 'Nothing matches these filters.' : 'Passes will appear here as students sign out at the kiosk.'}
+      {everything.length ? 'Nothing matches these filters.' : 'Passes will appear here as students take them at the kiosk.'}
     </div>
+  {/if}
+
+  {#if anyAttendance}
+    <section class="card" aria-labelledby="attendance-history-title">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Your own log, not official attendance</p>
+          <h2 id="attendance-history-title">Attendance</h2>
+          <p class="muted small">For the dates, class and student chosen above. Change today's marks on the class's page.</p>
+        </div>
+        <button class="btn" onclick={exportAttendance} disabled={!attendance.length}>
+          <Icon name="download" size={16} />Download attendance CSV
+        </button>
+      </div>
+      {#if attendance.length}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Date</th><th>Class</th><th>Student</th><th>Attendance</th><th>Arrived</th></tr>
+            </thead>
+            <tbody>
+              {#each attendance as mark (mark.id)}
+                <tr>
+                  <td>{shortDate(`${mark.day}T12:00:00`)}</td>
+                  <td>{className(mark.classId)}</td>
+                  <td>{mark.studentName}</td>
+                  <td>{markText(mark)}{#if mark.corrected} <span class="badge">Corrected</span>{/if}</td>
+                  <td>{mark.arrivedAt ? time(mark.arrivedAt) : '–'}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {:else}
+        <p class="muted small">No attendance for these dates.</p>
+      {/if}
+    </section>
   {/if}
 </div>
 
 {#if correcting}
   <CorrectionDialog
     pass={correcting}
-    students={findClass(correcting.classId)?.students ?? []}
+    students={classStudents(findClass(correcting.classId))}
     onClose={() => (correcting = null)}
   />
 {/if}
 
 <style>
+  .pass-note {
+    display: block;
+    max-width: 32ch;
+    white-space: normal;
+  }
+
   .wide {
     max-width: 1240px;
   }
