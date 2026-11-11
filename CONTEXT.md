@@ -213,10 +213,11 @@ open there, and only while the teacher has student devices turned on.
 _Avoid_: Student link (its old name), share link, public view, student view, student mode
 
 **Room**:
-What student devices join for one class period, with a short code (or its QR code)
-shown on the kiosk and the teacher's screen. Each time the Active Class changes
-there is a new Room with a new code, and the old code stops working, so students
-join again in every class. Between classes there is no Room.
+What student devices join for one class period, with the class's code (or its QR
+code) shown on the kiosk, the teacher's screen and the class's Settings. Each class
+keeps its code, but the code works only while that class is the Active Class: each
+time the Active Class changes, the old Room closes and the new class's opens, and
+every Claim ends. Between classes there is no Room.
 _Avoid_: Lobby, session, game, link (for the code)
 
 **Claim**:
@@ -229,8 +230,8 @@ computer and the student's device.
 _Avoid_: Login, account, sign-in, session, pairing (that makes a kiosk)
 
 **Watching**:
-A Student device in the Room without a Claim. It sees what the class lets
-students see, but can't act as anyone. The Student devices page counts devices
+A Student device in the Room without a Claim. It gets only counts, never a
+name, and can't act as anyone. The Student devices page counts devices
 that joined, and how many of them can take passes (hold a Claim).
 _Avoid_: Anonymous mode, guest, viewer
 

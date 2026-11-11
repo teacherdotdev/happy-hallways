@@ -33,7 +33,7 @@ import type { LinkAction, OwnView, StudentLinkMessage, StudentMessage, StudentVi
 
 /**
  * The Student link, on the teacher's computer. Each class period is a Room
- * with its own code (docs/adr/0019). Students open the link on
+ * with that class's lasting code (docs/adr/0023). Students open the link on
  * their own Chromebook or phone, and their browser connects straight to this
  * one (PeerJS over WebRTC, relayed through Cloudflare's TURN servers when a
  * network blocks direct connections; see peer.ts), the same way the kiosk
@@ -99,6 +99,16 @@ let roomPausedUntil = 0;
 
 /** The tab answering the link says so every few seconds, so another tab can tell it from another teacher's Room with the same code. */
 const holderKey = 'hallway.student-link-holder';
+/** Every code this computer answered lately, and when: a class's code comes back when the class does (docs/adr/0023). */
+const recentKey = 'hallway.student-link-recent';
+
+function recentlyHeld(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(recentKey) ?? '{}') ?? {};
+  } catch {
+    return {};
+  }
+}
 let holderTimer = 0;
 
 let peer: Peer | null = null;
@@ -114,11 +124,14 @@ class Tokens extends Map<DataConnection, string> {
   set(connection: DataConnection, token: string) {
     super.set(connection, token);
     countViewers();
+    // Set up now: this device sees names, if its class shows them.
+    if (typeof window !== 'undefined') pushView();
     return this;
   }
   delete(connection: DataConnection) {
     const had = super.delete(connection);
     countViewers();
+    if (had && typeof window !== 'undefined') pushView();
     return had;
   }
   clear() {
@@ -129,8 +142,8 @@ class Tokens extends Map<DataConnection, string> {
 const tokens = new Tokens();
 /** Wrong PINs tried by each device, and when it may try again. */
 const pinTries = new Map<DataConnection, { wrong: number; until: number }>();
-/** What viewers were last sent, so a save that changes nothing they see sends nothing. */
-let lastSent = '';
+/** What each viewer was last sent, so a save that changes nothing they see sends nothing. */
+const lastSent = new Map<DataConnection, string>();
 const lastOwn = new Map<DataConnection, string>();
 
 function send(connection: DataConnection, message: StudentLinkMessage) {
@@ -175,8 +188,11 @@ export async function serveStudentLink() {
     pushView();
     return;
   }
-  // A new Room (the class changed), or none: whoever was in the old one is told it ended.
-  turnAwayAll({ type: account.studentLink?.open ? 'old-link' : 'closed' });
+  // A new Room (the class changed), or none: whoever was in the old one is told why. A code
+  // some class still has works again when that class is on; one no class has is gone.
+  const oldCode = claimed?.slice(studentLinkPrefix.length);
+  const stillAClass = account.classes.some((cls) => cls.code === oldCode);
+  turnAwayAll({ type: !account.studentLink?.open ? 'closed' : stillAClass ? 'class-over' : 'old-link' });
   roomTries = [];
   roomPausedUntil = 0;
   clearInterval(holderTimer);
@@ -197,7 +213,13 @@ export async function serveStudentLink() {
     return;
   }
   peer = created;
-  const holding = () => localStorage.setItem(holderKey, JSON.stringify({ address, at: Date.now() }));
+  const holding = () => {
+    const at = Date.now();
+    localStorage.setItem(holderKey, JSON.stringify({ address, at }));
+    // Only the last ten minutes matter: longer ago, the server has long let the code go.
+    const recent = Object.fromEntries(Object.entries(recentlyHeld()).filter(([, when]) => at - when < 600_000));
+    localStorage.setItem(recentKey, JSON.stringify({ ...recent, [address]: at }));
+  };
   created.on('open', () => {
     heldSince = 0;
     studentLink.status = 'live';
@@ -223,7 +245,9 @@ export async function serveStudentLink() {
     const anotherTab = holder?.address === address && Date.now() - holder.at <= 15_000;
     if (anotherTab) heldSince = 0;
     else heldSince ||= Date.now();
-    if (holder?.address !== address || (!anotherTab && Date.now() - heldSince > 120_000)) {
+    // A class that was on minutes ago may still hold its code at the server, from before it ended.
+    const heldHere = holder?.address === address || Date.now() - (recentlyHeld()[address] ?? 0) < 300_000;
+    if (!heldHere || (!anotherTab && Date.now() - heldSince > 120_000)) {
       heldSince = 0;
       claimed = null;
       newRoom();
@@ -265,7 +289,7 @@ function welcome(connection: DataConnection) {
     else if (token) send(connection, { type: 'claim-ended' });
     countViewers();
     keepAlive(connection);
-    send(connection, { type: 'view', view: studentView() });
+    sendView(connection, studentView(Date.now(), tokens.has(connection)));
     sendOwn(connection, true);
   });
   connection.on('data', (data) => hear(connection, data as StudentMessage));
@@ -273,6 +297,7 @@ function welcome(connection: DataConnection) {
     tokens.delete(connection);
     pinTries.delete(connection);
     lastOwn.delete(connection);
+    lastSent.delete(connection);
     if (viewers.delete(connection)) countViewers();
   });
 }
@@ -414,16 +439,22 @@ function pushView() {
   clearTimeout(pushTimer);
   pushTimer = window.setTimeout(() => {
     if (!viewers.size) {
-      lastSent = '';
+      lastSent.clear();
       return;
     }
     for (const viewer of viewers) sendOwn(viewer);
-    const view = studentView();
-    const json = JSON.stringify(view);
-    if (json === lastSent) return;
-    lastSent = json;
-    for (const viewer of viewers) send(viewer, { type: 'view', view });
+    // Names go only to devices set up with a first name and PIN (docs/adr/0024).
+    const watching = studentView(Date.now(), false);
+    const setUp = studentView(Date.now(), true);
+    for (const viewer of viewers) sendView(viewer, tokens.has(viewer) ? setUp : watching);
   }, 150);
+}
+
+function sendView(connection: DataConnection, view: StudentView) {
+  const json = JSON.stringify(view);
+  if (lastSent.get(connection) === json) return;
+  lastSent.set(connection, json);
+  send(connection, { type: 'view', view });
 }
 
 onSave(serveStudentLink);
@@ -451,9 +482,15 @@ if (typeof window !== 'undefined') {
  * as the kiosk shows them. Never how long anyone has been out, and nothing
  * about how a student's passes are treated. See docs/adr/0022 and 0021.
  */
-export function studentView(at = Date.now()): StudentView {
+/**
+ * What a device in the Room sees. Names (who's out, who's in line) only for a
+ * device set up with a first name and PIN, and only if the class shows them;
+ * a Watching device gets counts. See docs/adr/0024.
+ */
+export function studentView(at = Date.now(), setUp = false): StudentView {
   const classId = account.activeClass?.id ?? null;
-  const shows = visibilityOf(findClass(classId));
+  const visibility = visibilityOf(findClass(classId));
+  const shows = setUp ? visibility : { ...visibility, names: false, lineNames: false };
   const status = passStatus(at);
   const noPass = classId ? noPassNow(classId, at) : null;
   const out = classId ? openPasses(classId) : [];
